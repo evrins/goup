@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"github.com/blang/semver/v4"
 	"log"
 	"testing"
 )
