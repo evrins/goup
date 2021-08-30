@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"github.com/owenthereal/goup/internal/entity"
+	"github.com/owenthereal/goup/internal/global"
 	"sort"
 	"strings"
 
@@ -65,8 +66,8 @@ func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) 
 // include = "all" to get all version
 // include = "" to get only recent version
 func getReleaseList(include string) (rl entity.ReleaseList, err error) {
-	host := "golang.google.cn"
-	link := fmt.Sprintf("https://%s/dl/", host)
+	// the tailing slash is the key to call api
+	link := fmt.Sprintf("https://%s/dl/", global.GoHost)
 	client := resty.New()
 
 	_, err = client.R().

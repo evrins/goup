@@ -3,6 +3,7 @@ package entity
 import (
 	"errors"
 	"fmt"
+	"github.com/owenthereal/goup/internal/global"
 	"runtime"
 	"sort"
 )
@@ -52,8 +53,7 @@ type File struct {
 }
 
 func (f File) Url() string {
-	host := "golang.google.cn"
-	return fmt.Sprintf("https://%s/dl/%s", host, f.Filename)
+	return fmt.Sprintf("https://%s/dl/%s", global.GoHost, f.Filename)
 }
 
 type ReleaseList []Release

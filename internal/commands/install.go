@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/owenthereal/goup/internal/entity"
+	"github.com/owenthereal/goup/internal/global"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -26,13 +27,9 @@ import (
 )
 
 const (
-	goHost                = "golang.org"
+	goHost                = "golang.google.cn"
 	goSourceGitURL        = "https://github.com/golang/go"
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
-)
-
-var (
-	installCmdGoHostFlag string
 )
 
 func installCmd() *cobra.Command {
@@ -58,7 +55,7 @@ number can be provided.`,
 		gh = goHost
 	}
 
-	installCmd.PersistentFlags().StringVar(&installCmdGoHostFlag, "host", gh, "host that is used to download Go. The GOUP_GO_HOST environment variable overrides this flag.")
+	installCmd.PersistentFlags().StringVar(&global.GoHost, "host", gh, "host that is used to download Go. The GOUP_GO_HOST environment variable overrides this flag.")
 
 	return installCmd
 }
