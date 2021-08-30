@@ -55,6 +55,8 @@ func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) 
 	if err != nil {
 		return
 	}
+	filter = strings.TrimPrefix(filter, "go")
+	filter = "go" + filter
 	for _, v := range rl {
 		if strings.HasPrefix(v.Version, filter) {
 			rs = append(rs, v)
