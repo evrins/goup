@@ -7,10 +7,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/owenthereal/goup/internal/entity"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -27,7 +27,6 @@ import (
 
 const (
 	goHost                = "golang.org"
-	goDownloadBaseURL     = "https://dl.google.com/go"
 	goSourceGitURL        = "https://github.com/golang/go"
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
 )
@@ -69,73 +68,59 @@ func preRunInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runInstall(cmd *cobra.Command, args []string) error {
-	var (
-		ver string
-		err error
-	)
+func runInstall(cmd *cobra.Command, args []string) (err error) {
+	var release entity.Release
+	var version string
 
 	if len(args) == 0 {
-		ver, err = latestGoVersion()
+		release, err = latestGoRelease()
 		if err != nil {
 			return err
 		}
 	} else {
-		ver = args[0]
-	}
-
-	// Add go prefix, e.g., go1.15.2
-	if !strings.HasPrefix(ver, "go") {
-		ver = "go" + ver
-	}
-
-	if ver == "gotip" {
-		var cl string
-		if len(args) > 1 {
-			cl = args[1]
+		version = args[0]
+		if version == "tip" {
+			var cl string
+			if len(args) > 1 {
+				cl = args[1]
+			}
+			err = installTip(cl)
+		} else {
+			var rl2 entity.ReleaseList
+			rl2, err = getVersionListWithFilter(version)
+			if err != nil {
+				return
+			}
+			if rl2.Len() == 0 {
+				err = errors.New("no matched go version found")
+				return
+			}
+			release = rl2[0]
+			err = install(release)
 		}
-
-		err = installTip(cl)
-	} else {
-		err = install(ver)
 	}
+
 	if err != nil {
 		return err
 	}
 
-	if err := symlink(ver); err != nil {
+	err = symlink(version)
+	if err != nil {
 		return err
 	}
 
-	logger.Printf("Default Go is set to '%s'", ver)
+	logger.Printf("Default Go is set to '%s'", version)
 
 	return nil
 }
 
-func latestGoVersion() (string, error) {
-	h, err := url.Parse(installCmdGoHostFlag)
+func latestGoRelease() (r entity.Release, err error) {
+	rl, err := getReleaseList("")
 	if err != nil {
-		return "", err
+		return
 	}
-	if h.Scheme == "" {
-		h.Scheme = "https"
-	}
-
-	resp, err := http.Get(fmt.Sprintf("%s/VERSION?m=text", h.String()))
-	if err != nil {
-		return "", fmt.Errorf("Getting current Go version failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode > 299 {
-		b, _ := ioutil.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("Could not get current Go version: HTTP %d: %q", resp.StatusCode, b)
-	}
-	version, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(version)), nil
+	r = rl[len(rl)-1]
+	return
 }
 
 func symlink(ver string) error {
@@ -148,7 +133,8 @@ func symlink(ver string) error {
 	return os.Symlink(version, current)
 }
 
-func install(version string) error {
+func install(release entity.Release) (err error) {
+	version := release.Version
 	targetDir := goupVersionDir(version)
 
 	if _, err := os.Stat(filepath.Join(targetDir, unpackedOkay)); err == nil {
@@ -159,26 +145,30 @@ func install(version string) error {
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}
-	goURL := versionArchiveURL(version)
-	res, err := http.Head(goURL)
+	file, err := release.ArchiveFile()
+	if err != nil {
+		return err
+	}
+	goUrl := file.Url()
+	res, err := http.Head(goUrl)
 	if err != nil {
 		return err
 	}
 	if res.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), runtime.GOARCH, goURL)
+		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), runtime.GOARCH, goUrl)
 	}
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(res.StatusCode), goURL)
+		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(res.StatusCode), goUrl)
 	}
-	base := path.Base(goURL)
+	base := path.Base(goUrl)
 	archiveFile := filepath.Join(targetDir, base)
 	if fi, err := os.Stat(archiveFile); err != nil || fi.Size() != res.ContentLength {
 		if err != nil && !os.IsNotExist(err) {
 			// Something weird. Don't try to download.
 			return err
 		}
-		if err := copyFromURL(archiveFile, goURL); err != nil {
-			return fmt.Errorf("error downloading %v: %v", goURL, err)
+		if err := copyFromURL(archiveFile, goUrl); err != nil {
+			return fmt.Errorf("error downloading %v: %v", goUrl, err)
 		}
 		fi, err = os.Stat(archiveFile)
 		if err != nil {
@@ -188,10 +178,7 @@ func install(version string) error {
 			return fmt.Errorf("downloaded file %s size %v doesn't match server size %v", archiveFile, fi.Size(), res.ContentLength)
 		}
 	}
-	wantSHA, err := slurpURLToString(goURL + ".sha256")
-	if err != nil {
-		return err
-	}
+	wantSHA := file.Sha256
 	if err := verifySHA256(archiveFile, strings.TrimSpace(wantSHA)); err != nil {
 		return fmt.Errorf("error verifying SHA256 of %v: %v", archiveFile, err)
 	}
@@ -581,23 +568,6 @@ func (p *progressWriter) Write(buf []byte) (n int, err error) {
 // testing of the Windows zip path when running on Linux/Darwin.
 func getOS() string {
 	return runtime.GOOS
-}
-
-// versionArchiveURL returns the zip or tar.gz URL of the given Go version.
-func versionArchiveURL(version string) string {
-	goos := getOS()
-
-	ext := "tar.gz"
-	if goos == "windows" {
-		ext = "zip"
-	}
-
-	arch := runtime.GOARCH
-	if goos == "linux" && runtime.GOARCH == "arm" {
-		arch = "armv6l"
-	}
-
-	return fmt.Sprintf("%s/%s.%s-%s.%s", goDownloadBaseURL, version, goos, arch, ext)
 }
 
 // unpackedOkay is a sentinel zero-byte file to indicate that the Go

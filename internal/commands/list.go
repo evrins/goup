@@ -2,9 +2,11 @@ package commands
 
 import (
 	"fmt"
-	"os/exec"
-	"regexp"
+	"github.com/owenthereal/goup/internal/entity"
+	"sort"
+	"strings"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -22,48 +24,59 @@ list all available versions.`,
 	}
 }
 
-func runList(cmd *cobra.Command, args []string) error {
-	var regexp string
+func runList(cmd *cobra.Command, args []string) (err error) {
+	var filter string
 	if len(args) > 0 {
-		regexp = args[0]
+		filter = args[0]
 	}
 
-	vers, err := listGoVersions(regexp)
+	filter = strings.TrimSpace(filter)
+	var rl entity.ReleaseList
+	if filter == "" {
+		rl, err = getReleaseList("all")
+	} else {
+		rl, err = getVersionListWithFilter(filter)
+	}
+
 	if err != nil {
 		return err
 	}
 
-	for _, ver := range vers {
-		fmt.Println(ver)
+	for _, v := range rl {
+		fmt.Println(strings.TrimPrefix(v.Version, "go"))
 	}
 
 	return nil
 }
 
-func listGoVersions(re string) ([]string, error) {
-	if re == "" {
-		re = ".+"
-	} else {
-		re = fmt.Sprintf(`.*%s.*`, re)
-
-	}
-
-	cmd := exec.Command("git", "ls-remote", "--tags", "https://github.com/golang/go")
-	refs, err := cmd.Output()
+func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) {
+	rl, err := getReleaseList("all")
 	if err != nil {
-		return nil, err
+		return
 	}
-
-	r := regexp.MustCompile(fmt.Sprintf(`refs/tags/go(%s)`, re))
-	match := r.FindAllStringSubmatch(string(refs), -1)
-	if match == nil {
-		return nil, fmt.Errorf("No Go version found")
+	for _, v := range rl {
+		if strings.Contains(v.Version, filter) {
+			rs = append(rs, v)
+		}
 	}
+	return
+}
 
-	var vers []string
-	for _, m := range match {
-		vers = append(vers, m[1])
+// include = "all" to get all version
+// include = "" to get only recent version
+func getReleaseList(include string) (rl entity.ReleaseList, err error) {
+	host := "golang.google.cn"
+	link := fmt.Sprintf("https://%s/dl/", host)
+	client := resty.New()
+
+	_, err = client.R().
+		SetQueryParam("mode", "json").
+		SetQueryParam("include", include).
+		SetResult(&rl).
+		Get(link)
+	if err != nil {
+		return
 	}
-
-	return vers, nil
+	sort.Sort(rl)
+	return
 }
