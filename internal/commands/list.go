@@ -56,7 +56,7 @@ func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) 
 		return
 	}
 	for _, v := range rl {
-		if strings.Contains(v.Version, filter) {
+		if strings.HasPrefix(v.Version, filter) {
 			rs = append(rs, v)
 		}
 	}
