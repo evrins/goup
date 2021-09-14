@@ -74,6 +74,7 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 		if err != nil {
 			return err
 		}
+		version = release.Version
 	} else {
 		version = args[0]
 		if version == "tip" {
@@ -94,6 +95,7 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 			}
 			release = rl2[0]
 			err = install(release)
+			version = release.Version
 		}
 	}
 
