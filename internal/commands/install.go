@@ -10,7 +10,6 @@ import (
 	"github.com/owenthereal/goup/internal/entity"
 	"github.com/owenthereal/goup/internal/global"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,13 +27,14 @@ import (
 
 const (
 	goHost                = "golang.google.cn"
+	goDownloadBaseURL     = "https://dl.google.com/go"
 	goSourceGitURL        = "https://github.com/golang/go"
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
 )
 
 func installCmd() *cobra.Command {
 	installCmd := &cobra.Command{
-		Use:   "install [version]",
+		Use:   "install [VERSION]",
 		Short: `Install Go with a version`,
 		Long: `Install Go by providing a version. If no version is provided, install
 the latest Go. If the version is 'tip', an optional change list (CL)
@@ -103,12 +103,9 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	err = symlink(version)
-	if err != nil {
+	if err := switchVer(ver); err != nil {
 		return err
 	}
-
-	logger.Printf("Default Go is set to '%s'", version)
 
 	return nil
 }
@@ -122,9 +119,32 @@ func latestGoRelease() (r entity.Release, err error) {
 	return
 }
 
+func switchVer(ver string) error {
+	if !strings.HasPrefix(ver, "go") {
+		ver = "go" + ver
+	}
+
+	err := symlink(ver)
+
+	if err == nil {
+		logger.Printf("Default Go is set to '%s'", ver)
+	}
+
+	return err
+}
+
 func symlink(ver string) error {
 	current := GoupCurrentDir()
 	version := goupVersionDir(ver)
+
+	if _, err := os.Stat(version); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("Go version %s is not installed. Install it with `goup install`.", ver)
+
+		} else {
+			return err
+		}
+	}
 
 	// ignore error, similar to rm -f
 	os.Remove(current)
@@ -185,7 +205,7 @@ func install(release entity.Release) (err error) {
 	if err := unpackArchive(targetDir, archiveFile); err != nil {
 		return fmt.Errorf("extracting archive %v: %v", archiveFile, err)
 	}
-	if err := ioutil.WriteFile(filepath.Join(targetDir, unpackedOkay), nil, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(targetDir, unpackedOkay), nil, 0644); err != nil {
 		return err
 	}
 	logger.Printf("Success: %s downloaded in %v", version, targetDir)
@@ -223,7 +243,7 @@ func installTip(clNumber string) error {
 
 	if clNumber != "" {
 		prompt := promptui.Prompt{
-			Label:     fmt.Sprintf("This will download and execute code from golang.org/cl/%s, continue", clNumber),
+			Label:     fmt.Sprintf("This will download and execute code from go.dev/cl/%s, continue", clNumber),
 			IsConfirm: true,
 		}
 
@@ -469,7 +489,7 @@ func slurpURLToString(url_ string) (string, error) {
 	if res.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%s: %v", url_, res.Status)
 	}
-	slurp, err := ioutil.ReadAll(res.Body)
+	slurp, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading %s: %v", url_, err)
 	}
