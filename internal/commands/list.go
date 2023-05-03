@@ -13,8 +13,9 @@ import (
 
 func listCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "ls-ver [regexp]",
-		Short: `List Go versions to install`,
+		Use:     "ls-ver [regexp]",
+		Aliases: []string{"ls"},
+		Short:   `List Go versions to install`,
 		Long: `List available Go versions matching a regexp filter for installation. If no filter is provided,
 list all available versions.`,
 		Example: `
