@@ -68,7 +68,7 @@ type goVer struct {
 func listGoVers() ([]goVer, error) {
 	files, err := os.ReadDir(GoupDir())
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	current, err := currentGoVersion()

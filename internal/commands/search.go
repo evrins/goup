@@ -2,9 +2,15 @@ package commands
 
 import (
 	"fmt"
+	"github.com/owenthereal/goup/internal/entity"
+	"github.com/owenthereal/goup/internal/global"
+
 	"os/exec"
 	"regexp"
+	"sort"
+	"strings"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -95,3 +101,4 @@ func getReleaseList(include string) (rl entity.ReleaseList, err error) {
 	}
 	sort.Sort(rl)
 	return
+}

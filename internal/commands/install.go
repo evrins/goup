@@ -103,7 +103,7 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 		return err
 	}
 
-	if err := switchVer(ver); err != nil {
+	if err := switchVer(version); err != nil {
 		return err
 	}
 
