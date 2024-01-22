@@ -17,3 +17,11 @@ func Test_getReleaseList(t *testing.T) {
 	}
 	log.Println(rs)
 }
+
+func Test_getVersionListWithFilter(t *testing.T) {
+	rs, err := getVersionListWithFilter("go1.21")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(rs)
+}

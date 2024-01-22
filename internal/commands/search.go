@@ -5,7 +5,6 @@ import (
 	"github.com/owenthereal/goup/internal/entity"
 	"github.com/owenthereal/goup/internal/global"
 
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -54,24 +53,24 @@ func listGoVersions(re string) ([]string, error) {
 
 	}
 
-	cmd := exec.Command("git", "ls-remote", "--sort=version:refname", "--tags", "https://github.com/golang/go")
-	refs, err := cmd.Output()
+	r := regexp.MustCompile(re)
+
+	rl, err := getReleaseList("all")
 	if err != nil {
 		return nil, err
 	}
 
-	r := regexp.MustCompile(fmt.Sprintf(`refs/tags/go(%s)`, re))
-	match := r.FindAllStringSubmatch(string(refs), -1)
-	if match == nil {
+	var versionList []string
+	for _, v := range rl.VersionList() {
+		if r.MatchString(v) {
+			versionList = append(versionList, v)
+		}
+	}
+	if len(versionList) == 0 {
 		return nil, fmt.Errorf("No Go version found")
 	}
 
-	var vers []string
-	for _, m := range match {
-		vers = append(vers, m[1])
-	}
-
-	return vers, nil
+	return versionList, nil
 }
 
 func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) {
