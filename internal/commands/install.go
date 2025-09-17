@@ -7,8 +7,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/owenthereal/goup/internal/entity"
-	"github.com/owenthereal/goup/internal/global"
 	"io"
 	"net/http"
 	"os"
@@ -20,6 +18,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/owenthereal/goup/internal/entity"
+	"github.com/owenthereal/goup/internal/global"
 
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
