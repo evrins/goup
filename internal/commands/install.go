@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	goHost                = "golang.google.cn"
+	goHost                = "go.dev"
 	goDownloadBaseURL     = "https://dl.google.com/go"
 	goSourceGitURL        = "https://github.com/golang/go"
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
