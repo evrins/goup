@@ -53,9 +53,8 @@ func listGoVersions(re string) ([]string, error) {
 
 	}
 
-	r := regexp.MustCompile(re)
-
-	rl, err := getReleaseList("all")
+	cmd := exec.Command("git", "ls-remote", "--sort=version:refname", "--tags", GetGoSourceGitURL())
+	refs, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}

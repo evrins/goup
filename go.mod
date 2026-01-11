@@ -10,7 +10,7 @@ require (
 	github.com/olekukonko/tablewriter v1.1.2
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.2
-	github.com/tj/go-update v2.2.4+incompatible
+	github.com/tj/go-update v2.2.5-0.20200519121640-62b4b798fd68+incompatible
 	golang.org/x/oauth2 v0.34.0
 )
 

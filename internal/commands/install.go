@@ -3,6 +3,7 @@ package commands
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"crypto/sha256"
 	"errors"
@@ -33,6 +34,41 @@ const (
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
 )
 
+var (
+	installCmdGoHostFlag string
+)
+
+func GetGoSourceGitURL() string {
+	gsURL := os.Getenv("GOUP_GO_SOURCE_GIT_URL")
+	if gsURL == "" {
+		gsURL = goSourceGitURL
+	}
+	return gsURL
+}
+
+func GetGoDownloadBaseURL() string {
+	gdURL := os.Getenv("GOUP_GO_DOWNLOAD_BASE_URL")
+	if gdURL == "" {
+		gdURL = goDownloadBaseURL
+	}
+	return gdURL
+}
+
+func GetGoHost() string {
+	gh := os.Getenv("GOUP_GO_HOST")
+	if gh == "" {
+		gh = goHost
+	}
+	return gh
+}
+
+func getGoArch() string {
+	if arch := os.Getenv("GOUP_GO_ARCH"); arch != "" {
+		return arch
+	}
+	return runtime.GOARCH
+}
+
 func installCmd() *cobra.Command {
 	installCmd := &cobra.Command{
 		Use:   "install [VERSION]",
@@ -51,12 +87,7 @@ number can be provided.`,
 		RunE:              runInstall,
 	}
 
-	gh := os.Getenv("GOUP_GO_HOST")
-	if gh == "" {
-		gh = goHost
-	}
-
-	installCmd.PersistentFlags().StringVar(&global.GoHost, "host", gh, "host that is used to download Go. The GOUP_GO_HOST environment variable overrides this flag.")
+	installCmd.PersistentFlags().StringVar(&installCmdGoHostFlag, "host", GetGoHost(), "host that is used to download Go. The GOUP_GO_HOST environment variable overrides this flag.")
 
 	return installCmd
 }
@@ -116,8 +147,25 @@ func latestGoRelease() (r entity.Release, err error) {
 	if err != nil {
 		return
 	}
-	r = rl[len(rl)-1]
-	return
+	if h.Scheme == "" {
+		h.Scheme = "https"
+	}
+
+	resp, err := http.Get(fmt.Sprintf("%s/VERSION?m=text", h.String()))
+	if err != nil {
+		return "", fmt.Errorf("Getting current Go version failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", fmt.Errorf("Could not get current Go version: HTTP %d: %q", resp.StatusCode, b)
+	}
+	version, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(version), nil
 }
 
 func switchVer(ver string) error {
@@ -157,30 +205,28 @@ func install(release entity.Release) (err error) {
 	version := release.Version
 	targetDir := goupVersionDir(version)
 
-	if _, err := os.Stat(filepath.Join(targetDir, unpackedOkay)); err == nil {
-		logger.Printf("%s: already downloaded in %v", version, targetDir)
+	if checkInstalled(targetDir) {
+		logger.Printf("%s: already installed in %v", version, targetDir)
 		return nil
+	}
+
+	goURL := versionArchiveURL(version)
+	res, err := http.Head(goURL)
+	if err != nil {
+		return err
+	}
+	if res.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), getGoArch(), goURL)
+	}
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(res.StatusCode), goUrl)
 	}
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}
-	file, err := release.ArchiveFile()
-	if err != nil {
-		return err
-	}
-	goUrl := file.Url()
-	res, err := http.Head(goUrl)
-	if err != nil {
-		return err
-	}
-	if res.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), runtime.GOARCH, goUrl)
-	}
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(res.StatusCode), goUrl)
-	}
-	base := path.Base(goUrl)
+
+	base := path.Base(goURL)
 	archiveFile := filepath.Join(targetDir, base)
 	if fi, err := os.Stat(archiveFile); err != nil || fi.Size() != res.ContentLength {
 		if err != nil && !os.IsNotExist(err) {
@@ -206,10 +252,11 @@ func install(release entity.Release) (err error) {
 	if err := unpackArchive(targetDir, archiveFile); err != nil {
 		return fmt.Errorf("extracting archive %v: %v", archiveFile, err)
 	}
-	if err := os.WriteFile(filepath.Join(targetDir, unpackedOkay), nil, 0644); err != nil {
+
+	if err := setInstalled(targetDir); err != nil {
 		return err
 	}
-	logger.Printf("Success: %s downloaded in %v", version, targetDir)
+	logger.Printf("Success: %s installed in %v", version, targetDir)
 	return nil
 }
 
@@ -234,10 +281,17 @@ func installTip(clNumber string) error {
 		if err := os.MkdirAll(root, 0755); err != nil {
 			return fmt.Errorf("failed to create repository: %v", err)
 		}
-		if err := git("clone", "--depth=1", goSourceGitURL, root); err != nil {
+
+		if err := git("clone", "--depth=1", GetGoSourceGitURL(), root); err != nil {
 			return fmt.Errorf("failed to clone git repository: %v", err)
 		}
-		if err := git("remote", "add", "upstream", goSourceUpsteamGitURL); err != nil {
+
+		gsuURL := os.Getenv("GOUP_GO_SOURCE_GIT_URL")
+		if gsuURL == "" {
+			gsuURL = goSourceUpsteamGitURL
+		}
+
+		if err := git("remote", "add", "upstream", gsuURL); err != nil {
 			return fmt.Errorf("failed to add upstream git repository: %v", err)
 		}
 	}
@@ -588,6 +642,23 @@ func (p *progressWriter) Write(buf []byte) (n int, err error) {
 // testing of the Windows zip path when running on Linux/Darwin.
 func getOS() string {
 	return runtime.GOOS
+}
+
+// versionArchiveURL returns the zip or tar.gz URL of the given Go version.
+func versionArchiveURL(version string) string {
+	goos := getOS()
+
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
+
+	arch := getGoArch()
+	if goos == "linux" && arch == "arm" {
+		arch = "armv6l"
+	}
+
+	return fmt.Sprintf("%s/%s.%s-%s.%s", GetGoDownloadBaseURL(), version, goos, arch, ext)
 }
 
 // unpackedOkay is a sentinel zero-byte file to indicate that the Go
