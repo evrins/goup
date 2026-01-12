@@ -3,7 +3,6 @@ package commands
 import (
 	"archive/tar"
 	"archive/zip"
-	"bufio"
 	"compress/gzip"
 	"crypto/sha256"
 	"errors"
@@ -12,24 +11,21 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/owenthereal/goup/internal/entity"
-	"github.com/owenthereal/goup/internal/global"
+	"github.com/owenthereal/goup/internal/service"
 
 	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 )
 
 const (
-	goHost                = "go.dev"
-	goDownloadBaseURL     = "https://dl.google.com/go"
+	goHost                = "golang.google.cn"
 	goSourceGitURL        = "https://github.com/golang/go"
 	goSourceUpsteamGitURL = "https://go.googlesource.com/go"
 )
@@ -44,14 +40,6 @@ func GetGoSourceGitURL() string {
 		gsURL = goSourceGitURL
 	}
 	return gsURL
-}
-
-func GetGoDownloadBaseURL() string {
-	gdURL := os.Getenv("GOUP_GO_DOWNLOAD_BASE_URL")
-	if gdURL == "" {
-		gdURL = goDownloadBaseURL
-	}
-	return gdURL
 }
 
 func GetGoHost() string {
@@ -69,6 +57,12 @@ func getGoArch() string {
 	return runtime.GOARCH
 }
 
+// getOS returns runtime.GOOS. It exists as a function just for lazy
+// testing of the Windows zip path when running on Linux/Darwin.
+func getOS() string {
+	return runtime.GOOS
+}
+
 func installCmd() *cobra.Command {
 	installCmd := &cobra.Command{
 		Use:   "install [VERSION]",
@@ -83,8 +77,7 @@ number can be provided.`,
   goup install tip # Compile Go tip
   goup install tip 1234 # 1234 is the CL number
 `,
-		PersistentPreRunE: preRunInstall,
-		RunE:              runInstall,
+		RunE: runInstall,
 	}
 
 	installCmd.PersistentFlags().StringVar(&installCmdGoHostFlag, "host", GetGoHost(), "host that is used to download Go. The GOUP_GO_HOST environment variable overrides this flag.")
@@ -92,17 +85,13 @@ number can be provided.`,
 	return installCmd
 }
 
-func preRunInstall(cmd *cobra.Command, args []string) error {
-	http.DefaultTransport = &userAgentTransport{http.DefaultTransport}
-	return nil
-}
-
 func runInstall(cmd *cobra.Command, args []string) (err error) {
 	var release entity.Release
 	var version string
+	var svc = service.NewGoReleaseService(GetGoHost())
 
 	if len(args) == 0 {
-		release, err = latestGoRelease()
+		release, err = svc.GetLatestRelease()
 		if err != nil {
 			return err
 		}
@@ -117,7 +106,7 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 			err = installTip(cl)
 		} else {
 			var rl2 entity.ReleaseList
-			rl2, err = getVersionListWithFilter(version)
+			rl2, err = svc.GetReleaseWithFilter(version)
 			if err != nil {
 				return
 			}
@@ -140,32 +129,6 @@ func runInstall(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	return nil
-}
-
-func latestGoRelease() (r entity.Release, err error) {
-	rl, err := getReleaseList("")
-	if err != nil {
-		return
-	}
-	if h.Scheme == "" {
-		h.Scheme = "https"
-	}
-
-	resp, err := http.Get(fmt.Sprintf("%s/VERSION?m=text", h.String()))
-	if err != nil {
-		return "", fmt.Errorf("Getting current Go version failed: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode > 299 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("Could not get current Go version: HTTP %d: %q", resp.StatusCode, b)
-	}
-	version, err := bufio.NewReader(resp.Body).ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(version), nil
 }
 
 func switchVer(ver string) error {
@@ -202,6 +165,8 @@ func symlink(ver string) error {
 }
 
 func install(release entity.Release) (err error) {
+	svc := service.NewGoReleaseService(GetGoHost())
+
 	version := release.Version
 	targetDir := goupVersionDir(version)
 
@@ -210,41 +175,48 @@ func install(release entity.Release) (err error) {
 		return nil
 	}
 
-	goURL := versionArchiveURL(version)
-	res, err := http.Head(goURL)
+	fg, err := release.ArchiveFile()
+	if err != nil {
+		return
+	}
+
+	fileUrl := fg.Url(GetGoHost())
+	code, contentLength, err := svc.CheckArchiveFileExists(fileUrl)
+
 	if err != nil {
 		return err
 	}
-	if res.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), getGoArch(), goURL)
+	if code == http.StatusNotFound {
+		return fmt.Errorf("no binary release of %v for %v/%v at %v", version, getOS(), getGoArch(), fileUrl)
 	}
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(res.StatusCode), goUrl)
+	if code != http.StatusOK {
+		return fmt.Errorf("server returned %v checking size of %v", http.StatusText(code), fileUrl)
 	}
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
 		return err
 	}
 
-	base := path.Base(goURL)
-	archiveFile := filepath.Join(targetDir, base)
-	if fi, err := os.Stat(archiveFile); err != nil || fi.Size() != res.ContentLength {
+	archiveFile := filepath.Join(targetDir, fg.Filename)
+	if fi, err := os.Stat(archiveFile); err != nil || fi.Size() != contentLength {
 		if err != nil && !os.IsNotExist(err) {
 			// Something weird. Don't try to download.
 			return err
 		}
-		if err := copyFromURL(archiveFile, goUrl); err != nil {
-			return fmt.Errorf("error downloading %v: %v", goUrl, err)
+		if err := svc.DownloadFile(archiveFile, fileUrl); err != nil {
+			return fmt.Errorf("error downloading %v: %v", fileUrl, err)
 		}
 		fi, err = os.Stat(archiveFile)
 		if err != nil {
 			return err
 		}
-		if fi.Size() != res.ContentLength {
-			return fmt.Errorf("downloaded file %s size %v doesn't match server size %v", archiveFile, fi.Size(), res.ContentLength)
+		if fi.Size() != contentLength {
+			return fmt.Errorf("downloaded file %s size %v doesn't match server size %v", archiveFile, fi.Size(), contentLength)
 		}
 	}
-	wantSHA := file.Sha256
+
+	wantSHA := fg.Sha256
+
 	if err := verifySHA256(archiveFile, strings.TrimSpace(wantSHA)); err != nil {
 		return fmt.Errorf("error verifying SHA256 of %v: %v", archiveFile, err)
 	}
@@ -534,64 +506,6 @@ func verifySHA256(file, wantHex string) error {
 	return nil
 }
 
-// slurpURLToString downloads the given URL and returns it as a string.
-func slurpURLToString(url_ string) (string, error) {
-	res, err := http.Get(url_)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: %v", url_, res.Status)
-	}
-	slurp, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading %s: %v", url_, err)
-	}
-	return string(slurp), nil
-}
-
-// copyFromURL downloads srcURL to dstFile.
-func copyFromURL(dstFile, srcURL string) (err error) {
-	f, err := os.Create(dstFile)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			f.Close()
-			os.Remove(dstFile)
-		}
-	}()
-	c := &http.Client{
-		Transport: &userAgentTransport{&http.Transport{
-			// It's already compressed. Prefer accurate ContentLength.
-			// (Not that GCS would try to compress it, though)
-			DisableCompression: true,
-			DisableKeepAlives:  true,
-			Proxy:              http.ProxyFromEnvironment,
-		}},
-	}
-	res, err := c.Get(srcURL)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return errors.New(res.Status)
-	}
-	pw := &progressWriter{w: f, total: res.ContentLength}
-	n, err := io.Copy(pw, res.Body)
-	if err != nil {
-		return err
-	}
-	if res.ContentLength != -1 && res.ContentLength != n {
-		return fmt.Errorf("copied %v bytes; expected %v", n, res.ContentLength)
-	}
-	pw.update() // 100%
-	return f.Close()
-}
-
 func makeScript() string {
 	switch runtime.GOOS {
 	case "plan9":
@@ -603,64 +517,6 @@ func makeScript() string {
 	}
 }
 
-type progressWriter struct {
-	w     io.Writer
-	n     int64
-	total int64
-	last  time.Time
-}
-
-func (p *progressWriter) update() {
-	end := " ..."
-	if p.n == p.total {
-		end = ""
-	}
-	fmt.Fprintf(os.Stderr, "Downloaded %5.1f%% (%*d / %d bytes)%s\n",
-		(100.0*float64(p.n))/float64(p.total),
-		ndigits(p.total), p.n, p.total, end)
-}
-
-func ndigits(i int64) int {
-	var n int
-	for ; i != 0; i /= 10 {
-		n++
-	}
-	return n
-}
-
-func (p *progressWriter) Write(buf []byte) (n int, err error) {
-	n, err = p.w.Write(buf)
-	p.n += int64(n)
-	if now := time.Now(); now.Unix() != p.last.Unix() {
-		p.update()
-		p.last = now
-	}
-	return
-}
-
-// getOS returns runtime.GOOS. It exists as a function just for lazy
-// testing of the Windows zip path when running on Linux/Darwin.
-func getOS() string {
-	return runtime.GOOS
-}
-
-// versionArchiveURL returns the zip or tar.gz URL of the given Go version.
-func versionArchiveURL(version string) string {
-	goos := getOS()
-
-	ext := "tar.gz"
-	if goos == "windows" {
-		ext = "zip"
-	}
-
-	arch := getGoArch()
-	if goos == "linux" && arch == "arm" {
-		arch = "armv6l"
-	}
-
-	return fmt.Sprintf("%s/%s.%s-%s.%s", GetGoDownloadBaseURL(), version, goos, arch, ext)
-}
-
 // unpackedOkay is a sentinel zero-byte file to indicate that the Go
 // version was downloaded and unpacked successfully.
 const unpackedOkay = ".unpacked-success"
@@ -670,18 +526,4 @@ func validRelPath(p string) bool {
 		return false
 	}
 	return true
-}
-
-type userAgentTransport struct {
-	rt http.RoundTripper
-}
-
-func (uat userAgentTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	version := runtime.Version()
-	if strings.Contains(version, "devel") {
-		// Strip the SHA hash and date. We don't want spaces or other tokens (see RFC2616 14.43)
-		version = "devel"
-	}
-	r.Header.Set("User-Agent", "goup/"+version)
-	return uat.rt.RoundTrip(r)
 }

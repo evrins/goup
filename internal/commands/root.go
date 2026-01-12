@@ -49,7 +49,6 @@ func NewCommand() *cobra.Command {
 	rootCmd.AddCommand(listCmd())
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(versionCmd())
-	rootCmd.AddCommand(upgradeCmd())
 
 	return rootCmd
 }

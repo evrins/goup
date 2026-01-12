@@ -3,7 +3,6 @@ package entity
 import (
 	"errors"
 	"fmt"
-	"github.com/owenthereal/goup/internal/global"
 	"runtime"
 	"sort"
 )
@@ -52,8 +51,8 @@ type File struct {
 	Kind     Kind   `json:"kind"`
 }
 
-func (f File) Url() string {
-	return fmt.Sprintf("https://%s/dl/%s", global.GoHost, f.Filename)
+func (f File) Url(goHost string) string {
+	return fmt.Sprintf("https://%s/dl/%s", goHost, f.Filename)
 }
 
 type ReleaseList []Release

@@ -2,14 +2,11 @@ package commands
 
 import (
 	"fmt"
-	"github.com/owenthereal/goup/internal/entity"
-	"github.com/owenthereal/goup/internal/global"
+
+	"github.com/owenthereal/goup/internal/service"
 
 	"regexp"
-	"sort"
-	"strings"
 
-	"github.com/go-resty/resty/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -53,8 +50,10 @@ func listGoVersions(re string) ([]string, error) {
 
 	}
 
-	cmd := exec.Command("git", "ls-remote", "--sort=version:refname", "--tags", GetGoSourceGitURL())
-	refs, err := cmd.Output()
+	var svc = service.NewGoReleaseService(GetGoHost())
+	r := regexp.MustCompile(re)
+
+	rl, err := svc.GetReleaseList("all")
 	if err != nil {
 		return nil, err
 	}
@@ -66,37 +65,8 @@ func listGoVersions(re string) ([]string, error) {
 		}
 	}
 	if len(versionList) == 0 {
-		return nil, fmt.Errorf("No Go version found")
+		return nil, fmt.Errorf("no Go version found")
 	}
 
 	return versionList, nil
-}
-
-func getVersionListWithFilter(filter string) (rs entity.ReleaseList, err error) {
-	rl, err := getReleaseList("all")
-	filter = strings.TrimPrefix(filter, "go")
-	filter = "go" + filter
-	for _, v := range rl {
-		if strings.HasPrefix(v.Version, filter) {
-			rs = append(rs, v)
-		}
-	}
-	return
-}
-
-func getReleaseList(include string) (rl entity.ReleaseList, err error) {
-	// the tailing slash is the key to call api
-	link := fmt.Sprintf("https://%s/dl/", global.GoHost)
-	client := resty.New()
-
-	_, err = client.R().
-		SetQueryParam("mode", "json").
-		SetQueryParam("include", include).
-		SetResult(&rl).
-		Get(link)
-	if err != nil {
-		return
-	}
-	sort.Sort(rl)
-	return
 }

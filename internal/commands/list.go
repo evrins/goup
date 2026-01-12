@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/cobra"
 )
 
@@ -32,11 +33,10 @@ func runList(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Version", "Active"})
-	table.SetBorders(tablewriter.Border{Left: true, Top: false, Right: true, Bottom: false})
-	table.SetCenterSeparator("|")
-	table.SetAlignment(tablewriter.ALIGN_CENTER)
+	table := tablewriter.NewTable(os.Stdout,
+		tablewriter.WithHeader([]string{"Version", "Active"}),
+		tablewriter.WithAlignment([]tw.Align{tw.AlignCenter}),
+	)
 
 	for _, ver := range vers {
 		if ver.Current {
